@@ -3,6 +3,7 @@ import { setupWebviewMessageListener } from "./webviewMessageHandler";
 import { ExtensionState } from "./extensionState";
 import { getWebviewContent } from "./webviewContent";
 import { sourceOptions, targetOptions } from "./config/labels";
+import { AnalyzerClient } from "./client/analyzerClient";
 
 let fullScreenPanel: vscode.WebviewPanel | undefined;
 
@@ -14,38 +15,26 @@ function getFullScreenTab() {
 const commandsMap: (
   extensionContext: vscode.ExtensionContext,
   state: ExtensionState,
+  analyzerClient: AnalyzerClient,
 ) => {
   [command: string]: (...args: any) => any;
-} = (extensionContext, state) => {
+} = (extensionContext, state, analyzerClient) => {
   const { sidebarProvider } = state;
   return {
-    "konveyor.startAnalysis": async (resource: vscode.Uri) => {
-      if (!resource) {
-        vscode.window.showErrorMessage("No file selected for analysis.");
+    "konveyor.runAnalysis": async () => {
+      analyzerClient.runAnalysis();
+    },
+    "konveyor.startAnalyzer": async () => {
+      if (!(await analyzerClient.canAnalyze())) {
         return;
       }
-
-      // Get the file path
-      const filePath = resource.fsPath;
-
-      // Perform your analysis logic here
-      try {
-        // For example, read the file content
-        const fileContent = await vscode.workspace.fs.readFile(resource);
-        const contentString = Buffer.from(fileContent).toString("utf8");
-
-        console.log(contentString, fileContent);
-
-        // TODO: Analyze the file content
-        vscode.window.showInformationMessage(`Analyzing file: ${filePath}`);
-
-        // Call your analysis function/module
-        // analyzeFileContent(contentString);
-      } catch (error) {
-        vscode.window.showErrorMessage(`Failed to analyze file: ${error}`);
+      vscode.window.showInformationMessage("Starting analyzer...");
+      if (!analyzerClient) {
+        vscode.window.showErrorMessage("Analyzer not constructed!");
       }
+      // analyzerClient.initialize();
+      analyzerClient.start();
     },
-
     "konveyor.focusKonveyorInput": async () => {
       const fullScreenTab = getFullScreenTab();
       if (!fullScreenTab) {
@@ -116,14 +105,11 @@ const commandsMap: (
       };
 
       const fileUri = await vscode.window.showOpenDialog(options);
-
       if (fileUri && fileUri[0]) {
         const filePath = fileUri[0].fsPath;
-
         // Update the user settings
         const config = vscode.workspace.getConfiguration("konveyor");
         await config.update("analyzerPath", filePath, vscode.ConfigurationTarget.Global);
-
         vscode.window.showInformationMessage(`Analyzer binary path updated to: ${filePath}`);
       } else {
         vscode.window.showInformationMessage("No analyzer binary selected.");
@@ -141,10 +127,8 @@ const commandsMap: (
       };
 
       const fileUris = await vscode.window.showOpenDialog(options);
-
       if (fileUris && fileUris.length > 0) {
         const customRules = fileUris.map((uri) => uri.fsPath);
-
         // TODO(djzager): Should we verify the rules provided are valid?
 
         // Update the user settings
@@ -297,8 +281,12 @@ const commandsMap: (
   };
 };
 
-export function registerAllCommands(context: vscode.ExtensionContext, state: ExtensionState) {
-  for (const [command, callback] of Object.entries(commandsMap(context, state))) {
+export function registerAllCommands(
+  context: vscode.ExtensionContext,
+  state: ExtensionState,
+  analyzerClient: AnalyzerClient,
+) {
+  for (const [command, callback] of Object.entries(commandsMap(context, state, analyzerClient))) {
     context.subscriptions.push(vscode.commands.registerCommand(command, callback));
   }
 }

@@ -1,11 +1,13 @@
-import * as vscode from "vscode";
 import { v4 as uuidv4 } from "uuid";
+import * as vscode from "vscode";
 import { KonveyorGUIWebviewViewProvider } from "./KonveyorGUIWebviewViewProvider";
 import { registerAllCommands } from "./commands";
-import { setupWebviewMessageListener } from "./webviewMessageHandler";
 import { ExtensionState } from "./extensionState";
+import { setupWebviewMessageListener } from "./webviewMessageHandler";
+import { AnalyzerClient } from "./client/analyzerClient";
 
 export class VsCodeExtension {
+  public client: AnalyzerClient;
   private extensionContext: vscode.ExtensionContext;
   private windowId: string;
   private state: ExtensionState;
@@ -43,7 +45,10 @@ export class VsCodeExtension {
       setupWebviewMessageListener(webview);
     });
 
+    // Construct the analyzer client
+    this.client = new AnalyzerClient(context);
+
     // Commands
-    registerAllCommands(this.extensionContext, this.state);
+    registerAllCommands(this.extensionContext, this.state, this.client);
   }
 }
