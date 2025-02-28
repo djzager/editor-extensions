@@ -34,13 +34,12 @@ import {
 } from "@patternfly/react-core";
 
 import ProgressIndicator from "../ProgressIndicator";
-import ViolationIncidentsList from "../ViolationIncidentsList";
-import { Incident } from "@editor-extensions/shared";
-import { openFile, startServer, runAnalysis, stopServer } from "../../hooks/actions";
+import { startServer, runAnalysis, stopServer } from "../../hooks/actions";
 import { ServerStatusToggle } from "../ServerStatusToggle/ServerStatusToggle";
 import { ViolationsCount } from "../ViolationsCount/ViolationsCount";
-import { useViolations } from "../..//hooks/useViolations";
+import { useViolations } from "../../hooks/useViolations";
 import { useExtensionStateContext } from "../../context/ExtensionStateContext";
+import { EnhancedIncidentTable } from "../IncidentTable/EnhancedIncidentTable";
 
 const AnalysisPage: React.FC = () => {
   const { state, dispatch } = useExtensionStateContext();
@@ -56,13 +55,6 @@ const AnalysisPage: React.FC = () => {
   const serverRunning = state.serverState === "running";
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [focusedIncident, setFocusedIncident] = useState<Incident | null>(null);
-  const [expandedViolations, setExpandedViolations] = useState<Set<string>>(new Set());
-
-  const handleIncidentSelect = (incident: Incident) => {
-    setFocusedIncident(incident);
-    dispatch(openFile(incident.uri, incident.lineNumber ?? 0));
-  };
 
   const runAnalysisRequest = () => dispatch(runAnalysis());
 
@@ -173,13 +165,7 @@ const AnalysisPage: React.FC = () => {
                 )}
 
                 {hasViolations && !isAnalyzing && (
-                  <ViolationIncidentsList
-                    enhancedIncidents={enhancedIncidents}
-                    focusedIncident={focusedIncident}
-                    onIncidentSelect={handleIncidentSelect}
-                    expandedViolations={expandedViolations}
-                    setExpandedViolations={setExpandedViolations}
-                  />
+                  <EnhancedIncidentTable incidents={enhancedIncidents} isReadOnly={false} />
                 )}
               </CardBody>
             </Card>

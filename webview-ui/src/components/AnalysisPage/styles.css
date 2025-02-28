@@ -16,3 +16,7 @@
 .empty-state-analysis-results {
   color: var(--vscode-foreground);
 }
+
+.pf-v6-c-table tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1); /* Light separator */
+}
