@@ -19,11 +19,6 @@ type GetSolutionDropdownProps = {
 };
 
 const GetSolutionDropdown: React.FC<GetSolutionDropdownProps> = ({ incidents }) => {
-  if (!incidents || incidents.length === 0) {
-    console.log("Empty Incidents");
-    return null;
-  }
-
   const [isOpen, setIsOpen] = useState(false);
   const { state, dispatch } = useExtensionStateContext();
   const onGetSolution = (incidents: EnhancedIncident[], effort: SolutionEffortLevel) => {
@@ -31,16 +26,14 @@ const GetSolutionDropdown: React.FC<GetSolutionDropdownProps> = ({ incidents }) 
   };
 
   const isButtonDisabled =
-    state.isFetchingSolution || state.isAnalyzing || state.serverState !== "running";
-
-  // The disabled plain button looks terrible, just return undefined
-  if (isButtonDisabled) {
-    return undefined;
-  }
+    incidents.length === 0 ||
+    state.isFetchingSolution ||
+    state.isAnalyzing ||
+    state.serverState !== "running";
 
   const menuToggle = (
     <MenuToggle
-      variant="plain"
+      variant="primary"
       isDisabled={isButtonDisabled}
       splitButtonOptions={{
         items: [
