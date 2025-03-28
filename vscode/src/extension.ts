@@ -13,6 +13,7 @@ import { IssuesModel, registerIssueView } from "./issueView";
 import { ensurePaths, ExtensionPaths } from "./paths";
 import { copySampleProviderSettings } from "./utilities/fileUtils";
 import { getConfigSolutionMaxEffortLevel } from "./utilities";
+import { KonveyorContextProvider } from "./continue/konveyorContextProvider";
 
 class VsCodeExtension {
   private state: ExtensionState;
@@ -162,6 +163,14 @@ class VsCodeExtension {
         },
       ),
     );
+
+    // Register Continue context provider
+    const continueExt = vscode.extensions.getExtension("Continue.continue");
+    if (continueExt) {
+      const continueApi = continueExt.exports;
+      const provider = new KonveyorContextProvider(this.state);
+      continueApi?.registerCustomContextProvider(provider);
+    }
   }
 
   public async dispose() {
