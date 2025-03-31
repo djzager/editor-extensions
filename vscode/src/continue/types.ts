@@ -159,10 +159,11 @@ export interface LoadSubmenuItemsArgs {
 }
 
 export interface ContextSubmenuItem {
-  name: string;
+  id: string;
+  title: string;
   description: string;
-  content: string;
-  range?: RangeInFile;
+  icon?: string;
+  metadata?: any;
 }
 
 export interface IContextProvider {
