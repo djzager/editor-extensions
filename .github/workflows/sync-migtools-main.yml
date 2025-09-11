@@ -8,6 +8,8 @@ on:
         required: true
         default: "main"
     # Manual triggering only
+  schedule:
+    - cron: "05 5 * * *" # every day @ 5:05am UTC
 
 jobs:
   sync:
