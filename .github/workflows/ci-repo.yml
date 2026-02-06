@@ -235,52 +235,12 @@ jobs:
       - name: Build dist
         run: npm run dist
 
-      - name: Package core extension
+      - name: Package all extensions
         run: |
           if [ "${{ steps.check_prerelease.outputs.is_prerelease }}" = "true" ]; then
-            npm run package-core -- --pre-release
+            npm run package -- --pre-release
           else
-            npm run package-core
-          fi
-
-      - name: Package Java extension
-        run: |
-          if [ "${{ steps.check_prerelease.outputs.is_prerelease }}" = "true" ]; then
-            npm run package-java -- --pre-release
-          else
-            npm run package-java
-          fi
-
-      - name: Package JavaScript extension
-        run: |
-          if [ "${{ steps.check_prerelease.outputs.is_prerelease }}" = "true" ]; then
-            npm run package-javascript -- --pre-release
-          else
-            npm run package-javascript
-          fi
-
-      - name: Package Go extension
-        run: |
-          if [ "${{ steps.check_prerelease.outputs.is_prerelease }}" = "true" ]; then
-            npm run package-go -- --pre-release
-          else
-            npm run package-go
-          fi
-
-      - name: Package C# extension
-        run: |
-          if [ "${{ steps.check_prerelease.outputs.is_prerelease }}" = "true" ]; then
-            npm run package-csharp -- --pre-release
-          else
-            npm run package-csharp
-          fi
-
-      - name: Package Konveyor extension pack
-        run: |
-          if [ "${{ steps.check_prerelease.outputs.is_prerelease }}" = "true" ]; then
-            npm run package-pack -- --pre-release
-          else
-            npm run package-pack
+            npm run package
           fi
 
       - name: Upload VSIX artifacts
@@ -316,41 +276,56 @@ jobs:
           name: vsix-artifacts
           path: ./dist
 
-      - name: Deploy development builds
+      - name: Create versioned archive
         run: |
-          for vsix in ./dist/*.vsix; do
-            VSIX_NAME=$(basename "$vsix")
-            echo "Uploading $VSIX_NAME"
-            gh release upload development-builds "$vsix" --clobber
-          done
+          # Get display name from root package.json
+          DISPLAY_NAME=$(npm pkg get displayName | tr -d '"' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+
+          # Get version from package.json
+          CURRENT_VERSION=$(npm pkg get version | tr -d '"')
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          SHA=$(git rev-parse --short HEAD)
+          ARCHIVE_VERSION="${CURRENT_VERSION}-dev.${TIMESTAMP}.${SHA}"
+          ARCHIVE_NAME="${DISPLAY_NAME}-extensions-${ARCHIVE_VERSION}.zip"
+
+          echo "Creating archive: $ARCHIVE_NAME"
+          cd dist
+          zip -r "../${ARCHIVE_NAME}" *.vsix
+          cd ..
+
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
+          echo "Archive contents:"
+          unzip -l "${ARCHIVE_NAME}"
+
+      - name: Deploy development build archive
+        run: |
+          echo "Uploading $ARCHIVE_NAME"
+          gh release upload development-builds "$ARCHIVE_NAME" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Cleanup old development builds
         run: |
-          # Keep last N builds per extension type
+          # Keep last N archived builds
           BUILDS_TO_KEEP=7
 
-          # Process each extension type
-          for ext in konveyor-core konveyor konveyor-java konveyor-javascript konveyor-go konveyor-csharp; do
-            echo "Processing ${ext}..."
+          # Get display name from root package.json for pattern matching
+          DISPLAY_NAME=$(npm pkg get displayName | tr -d '"' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 
-            # Match pattern: {ext}-{version} where version starts with a digit
-            # This handles "konveyor-0.4.0..." and "konveyor-java-0.4.0..." correctly
-            assets=$(gh release view -R ${{ github.repository }} development-builds --json assets | \
-              jq -r ".assets[].name | select(test(\"^${ext}-[0-9]\"))" | \
-              sort -r)
+          echo "Fetching existing development build archives..."
+          assets=$(gh release view -R ${{ github.repository }} development-builds --json assets | \
+            jq -r ".assets[].name | select(test(\"^${DISPLAY_NAME}-extensions-.*\\\\.zip$\"))" | \
+            sort -r)
 
-            count=0
-            for asset in $assets; do
-              count=$((count + 1))
-              if [ "$count" -gt "$BUILDS_TO_KEEP" ]; then
-                echo "Deleting old asset: $asset"
-                gh release delete-asset -y -R ${{ github.repository }} development-builds "$asset"
-              else
-                echo "Keeping: $asset"
-              fi
-            done
+          count=0
+          for asset in $assets; do
+            count=$((count + 1))
+            if [ "$count" -gt "$BUILDS_TO_KEEP" ]; then
+              echo "Deleting old archive: $asset"
+              gh release delete-asset -y -R ${{ github.repository }} development-builds "$asset"
+            else
+              echo "Keeping: $asset"
+            fi
           done
         env:
           GH_TOKEN: ${{ github.token }}
