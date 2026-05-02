@@ -1,5 +1,5 @@
 language: "en-US"
-early_access: false
+early_access: true
 reviews:
   profile: "chill"
   high_level_summary: true
@@ -8,3 +8,84 @@ reviews:
   commit_status: false
   changed_files_summary: false
   sequence_diagrams: false
+  auto_reply: true
+  auto_review: true
+
+# Test failure analysis configuration
+knowledge_base:
+  - "tests/**/*.ts"
+  - "playwright.config.ts"
+  - ".github/workflows/e2e-tests.yml"
+  - ".github/actions/ai-test-analysis/**"
+
+path_instructions:
+  - path: "tests/**"
+    instructions: |
+      Focus on test failure analysis and flakiness detection:
+
+      FAILURE TYPE CLASSIFICATION:
+      - **Flaky**: Timing issues, race conditions, async/await problems, intermittent UI state
+      - **Real Bug**: Assertion failures on business logic, reproducible functional issues
+      - **Infrastructure**: Network errors, service unavailability, environment setup issues
+      - **Environment**: Missing dependencies, configuration problems, system resource issues
+
+      ANALYSIS PRIORITIES:
+      1. Identify if failures are deterministic (real bugs) or non-deterministic (flaky)
+      2. Look for common patterns: timeouts, network errors, UI state inconsistencies
+      3. Consider test tier implications (@tier0 blocks PRs, @tier1 blocks releases)
+      4. Suggest specific fixes rather than generic advice
+      5. Recommend retry only for non-deterministic failures with high confidence
+
+      EVIDENCE TO EXAMINE:
+      - Error messages and stack traces in logs
+      - Screenshot evidence of UI state
+      - Playwright trace files for step-by-step analysis
+      - Network request failures or timeouts
+      - System resource utilization
+
+      RETRY RECOMMENDATIONS:
+      - Recommend retry for flaky tests (confidence >70% for tier0, >60% for tier1)
+      - Never retry real bugs - they need code fixes
+      - Consider infrastructure issues for retry if temporary
+      - Account for safety limits (max 2 retries for tier0, 3 for tier1)
+
+  - path: "playwright.config.ts"
+    instructions: |
+      Review test configuration for stability improvements:
+      - Timeout settings (too aggressive may cause flaky failures)
+      - Retry configuration and its interaction with AI analysis
+      - Screenshot/trace collection for failure debugging
+      - Test parallelization that might cause race conditions
+
+  - path: ".github/workflows/e2e-tests.yml"
+    instructions: |
+      Analyze CI/CD workflow for test reliability:
+      - Environment setup that could affect test outcomes
+      - Artifact collection for failure analysis
+      - Integration with AI analysis workflow
+      - Tier-specific failure handling and retry logic
+
+  - path: ".github/actions/ai-test-analysis/**"
+    instructions: |
+      Review AI analysis implementation for:
+      - Pattern detection accuracy and completeness
+      - Safety limit enforcement
+      - PR comment formatting and usefulness
+      - Integration with existing CI/CD patterns
+
+chat:
+  auto_reply: true
+  instructions: |
+    When analyzing test failures or discussing testing strategies:
+
+    1. **Prioritize actionability**: Focus on specific, implementable solutions
+    2. **Consider test tiers**: Different tiers have different tolerance for failures and retries
+    3. **Distinguish flaky vs bugs**: This is critical for retry decisions
+    4. **Examine evidence holistically**: Logs, screenshots, traces, and historical patterns
+    5. **Suggest incremental improvements**: Better assertion strategies, more robust waits, etc.
+
+    For test failure analysis specifically:
+    - Always explain your confidence level and reasoning
+    - Identify the most likely root cause first, then alternatives
+    - Consider the broader impact on CI/CD pipeline reliability
+    - Recommend monitoring for pattern trends over time

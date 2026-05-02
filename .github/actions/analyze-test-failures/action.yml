@@ -1,0 +1,195 @@
+name: "Analyze Test Failures"
+description: "Simple shell-based test failure analysis with retry recommendations"
+author: "Konveyor"
+
+inputs:
+  test-tier:
+    description: "Test tier (tier0, tier1, tier2, tier3)"
+    required: true
+  artifacts-path:
+    description: "Path to test failure artifacts"
+    required: true
+  pr-number:
+    description: "PR number for commenting (optional)"
+    required: false
+  trigger-context:
+    description: "Context that triggered the analysis (pr, release, manual)"
+    required: true
+    default: "manual"
+
+outputs:
+  failure-type:
+    description: "Type of failure detected"
+    value: ${{ steps.analyze.outputs.failure-type }}
+  retry-recommended:
+    description: "Whether retry is recommended"
+    value: ${{ steps.analyze.outputs.retry-recommended }}
+  confidence:
+    description: "Analysis confidence level"
+    value: ${{ steps.analyze.outputs.confidence }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Analyze test failures
+      id: analyze
+      shell: bash
+      run: |
+        echo "🔍 Analyzing test failures for ${{ inputs.test-tier }}..."
+
+        # Initialize variables
+        ARTIFACTS_PATH="${{ inputs.artifacts-path }}"
+        TEST_TIER="${{ inputs.test-tier }}"
+        FAILURE_TYPE="unknown"
+        CONFIDENCE="0.5"
+        RETRY_RECOMMENDED="false"
+        EVIDENCE=""
+
+        # Check if artifacts exist
+        if [[ ! -d "$ARTIFACTS_PATH" ]]; then
+          echo "⚠️ Artifacts path not found: $ARTIFACTS_PATH"
+          echo "failure-type=no-artifacts" >> $GITHUB_OUTPUT
+          echo "retry-recommended=false" >> $GITHUB_OUTPUT
+          echo "confidence=0.0" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Count and categorize artifacts
+        LOG_COUNT=$(find "$ARTIFACTS_PATH" -name "*.log" -o -name "*.txt" | wc -l)
+        SCREENSHOT_COUNT=$(find "$ARTIFACTS_PATH" -name "*.png" -o -name "*.jpg" | wc -l)
+        TRACE_COUNT=$(find "$ARTIFACTS_PATH" -name "*trace*" | wc -l)
+
+        echo "📊 Found artifacts: $LOG_COUNT logs, $SCREENSHOT_COUNT screenshots, $TRACE_COUNT traces"
+
+        # Analyze log files for patterns
+        TIMEOUT_FOUND=0
+        NETWORK_FOUND=0
+        ASSERTION_FOUND=0
+
+        while IFS= read -r logfile; do
+          if [[ -f "$logfile" ]]; then
+            # Check for timeout patterns
+            if grep -qi -E "(timeout|timed out|time limit exceeded)" "$logfile"; then
+              TIMEOUT_FOUND=1
+              EVIDENCE="$EVIDENCE timeout detected in $(basename "$logfile");"
+            fi
+
+            # Check for network issues
+            if grep -qi -E "(econnrefused|network error|connection failed|dns)" "$logfile"; then
+              NETWORK_FOUND=1
+              EVIDENCE="$EVIDENCE network error in $(basename "$logfile");"
+            fi
+
+            # Check for assertion failures
+            if grep -qi -E "(assertion|expect.*failed|should.*but got)" "$logfile"; then
+              ASSERTION_FOUND=1
+              EVIDENCE="$EVIDENCE assertion failure in $(basename "$logfile");"
+            fi
+          fi
+        done < <(find "$ARTIFACTS_PATH" -name "*.log" -o -name "*.txt")
+
+        # Classify failure type based on patterns
+        if [[ $ASSERTION_FOUND -eq 1 ]]; then
+          FAILURE_TYPE="real-bug"
+          CONFIDENCE="0.9"
+          RETRY_RECOMMENDED="false"
+          echo "🐛 Detected assertion failure - likely real bug"
+        elif [[ $NETWORK_FOUND -eq 1 ]]; then
+          FAILURE_TYPE="infrastructure"
+          CONFIDENCE="0.8"
+          RETRY_RECOMMENDED="true"
+          echo "🏗️ Detected network issue - infrastructure problem"
+        elif [[ $TIMEOUT_FOUND -eq 1 ]]; then
+          FAILURE_TYPE="flaky"
+          CONFIDENCE="0.7"
+          RETRY_RECOMMENDED="true"
+          echo "🔄 Detected timeout - likely flaky test"
+        else
+          FAILURE_TYPE="unknown"
+          CONFIDENCE="0.3"
+          # Conservative retry for unknown failures based on tier
+          case "$TEST_TIER" in
+            "tier0"|"tier1")
+              RETRY_RECOMMENDED="true"
+              echo "❓ Unknown failure type, but allowing retry for critical tier"
+              ;;
+            *)
+              RETRY_RECOMMENDED="false"
+              echo "❓ Unknown failure type, no retry for non-critical tier"
+              ;;
+          esac
+        fi
+
+        # Apply tier-specific logic
+        if [[ "$RETRY_RECOMMENDED" == "true" ]]; then
+          case "$TEST_TIER" in
+            "tier0")
+              MIN_CONFIDENCE="0.7"
+              ;;
+            "tier1")
+              MIN_CONFIDENCE="0.6"
+              ;;
+            *)
+              MIN_CONFIDENCE="0.8"
+              ;;
+          esac
+
+          # Check if confidence meets threshold (simple string comparison)
+          CONF_INT=$(echo "$CONFIDENCE" | tr -d '.')
+          MIN_INT=$(echo "$MIN_CONFIDENCE" | tr -d '.')
+          if [[ ${CONF_INT:-0} -lt ${MIN_INT:-0} ]]; then
+            RETRY_RECOMMENDED="false"
+            echo "⚠️ Confidence $CONFIDENCE below threshold $MIN_CONFIDENCE for $TEST_TIER"
+          fi
+        fi
+
+        # Output results
+        echo "failure-type=$FAILURE_TYPE" >> $GITHUB_OUTPUT
+        echo "retry-recommended=$RETRY_RECOMMENDED" >> $GITHUB_OUTPUT
+        echo "confidence=$CONFIDENCE" >> $GITHUB_OUTPUT
+
+        # Create summary
+        {
+          echo "## 🤖 Test Failure Analysis"
+          echo ""
+          echo "**Test Tier:** $TEST_TIER"
+          echo "**Failure Type:** $FAILURE_TYPE"
+          echo "**Confidence:** $(echo "$CONFIDENCE" | cut -c1-3 | tr -d '.')%"
+          echo "**Retry Recommended:** $RETRY_RECOMMENDED"
+          echo ""
+          echo "**Evidence:**"
+          if [[ -n "$EVIDENCE" ]]; then
+            echo "$EVIDENCE" | tr ';' '\n' | sed 's/^/- /'
+          else
+            echo "- No specific patterns detected"
+          fi
+          echo ""
+          echo "**Artifacts:** $LOG_COUNT logs, $SCREENSHOT_COUNT screenshots, $TRACE_COUNT traces"
+        } > failure-analysis.md
+
+        echo "✅ Analysis complete: $FAILURE_TYPE (confidence: $CONFIDENCE, retry: $RETRY_RECOMMENDED)"
+
+    - name: Comment on PR
+      if: inputs.pr-number != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if [[ -f failure-analysis.md ]]; then
+          echo "💬 Posting analysis to PR #${{ inputs.pr-number }}"
+
+          # Check if comment already exists
+          COMMENT_ID=$(gh api repos/${{ github.repository }}/issues/${{ inputs.pr-number }}/comments \
+            --jq '.[] | select(.body | contains("🤖 Test Failure Analysis")) | .id' | head -1)
+
+          if [[ -n "$COMMENT_ID" ]]; then
+            echo "Updating existing comment $COMMENT_ID"
+            gh api repos/${{ github.repository }}/issues/comments/$COMMENT_ID \
+              --method PATCH \
+              --field body="$(cat failure-analysis.md)"
+          else
+            echo "Creating new comment"
+            gh api repos/${{ github.repository }}/issues/${{ inputs.pr-number }}/comments \
+              --field body="$(cat failure-analysis.md)"
+          fi
+        fi

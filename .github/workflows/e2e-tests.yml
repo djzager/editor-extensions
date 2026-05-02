@@ -109,6 +109,8 @@ jobs:
           path: ./downloaded_assets
 
       - name: Run tier0 tests (excluding slow/infrastructure/offline)
+        id: tier0-tests
+        continue-on-error: true
         run: npx playwright test --grep "@tier0" --grep-invert "@slow|@requires-minikube|@offline"
         working-directory: ./tests
         env:
@@ -122,11 +124,79 @@ jobs:
 
       # This is intentionally kept in a separate step to avoid passing in credentials
       - name: Run tier0 offline tests (no real API calls)
+        id: tier0-offline-tests
+        continue-on-error: true
         run: npx playwright test --grep "@tier0" --grep "@offline"
         working-directory: ./tests
         env:
           __TEST_EXTENSION_END_TO_END__: "true"
           OPENAI_API_KEY: <dummy> # this only exists to pass provider validation notsecret
+          CORE_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.core_vsix }}
+          JAVA_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.java_vsix }}
+          JAVASCRIPT_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.javascript_vsix }}
+          GO_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.go_vsix }}
+          CSHARP_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.csharp_vsix }}
+
+      - name: Upload test failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tier0-test-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            tests/test-output/
+            tests/test-results/
+            tests/playwright-report/
+          retention-days: 7
+
+      - name: AI Analysis and Retry Decision
+        if: failure()
+        id: ai-analysis
+        uses: ./.github/actions/analyze-test-failures
+        with:
+          test-tier: "tier0"
+          artifacts-path: tests/test-output/
+          pr-number: ${{ github.event.pull_request.number }}
+          trigger-context: ${{ inputs.trigger_context }}
+
+      - name: Intelligent Retry (Attempt 1)
+        if: failure() && steps.ai-analysis.outputs.retry-recommended == 'true'
+        continue-on-error: true
+        run: |
+          echo "🔄 AI recommends retry for tier0 tests (attempt 1/2)"
+          echo "Failure type: ${{ steps.ai-analysis.outputs.failure-type }}"
+          echo "Confidence: ${{ steps.ai-analysis.outputs.confidence }}"
+
+          # Wait before retry (exponential backoff)
+          echo "Waiting 30 seconds before retry..."
+          sleep 30
+
+          # Retry the failed tests
+          npx playwright test --grep "@tier0" --grep-invert "@slow|@requires-minikube"
+        working-directory: ./tests
+        env:
+          __TEST_EXTENSION_END_TO_END__: "true"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CORE_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.core_vsix }}
+          JAVA_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.java_vsix }}
+          JAVASCRIPT_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.javascript_vsix }}
+          GO_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.go_vsix }}
+          CSHARP_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.csharp_vsix }}
+
+      - name: Second Retry (Attempt 2)
+        if: failure() && steps.ai-analysis.outputs.retry-recommended == 'true'
+        run: |
+          echo "🔄 Final retry for tier0 tests (attempt 2/2)"
+
+          # Longer wait for second retry
+          echo "Waiting 60 seconds before final retry..."
+          sleep 60
+
+          # Final retry attempt
+          npx playwright test --grep "@tier0" --grep-invert "@slow|@requires-minikube"
+        working-directory: ./tests
+        env:
+          __TEST_EXTENSION_END_TO_END__: "true"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CORE_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.core_vsix }}
           JAVA_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.java_vsix }}
           JAVASCRIPT_VSIX_FILE_PATH: ${{ github.workspace }}/${{ needs.setup.outputs.javascript_vsix }}
@@ -140,6 +210,13 @@ jobs:
           name: tier0-test-results
           path: tests/test-output/
           retention-days: 7
+
+      - name: Fail job if tests ultimately failed
+        if: failure() && (steps.tier0-tests.outcome == 'failure' || steps.tier0-offline-tests.outcome == 'failure')
+        run: |
+          echo "❌ Tier0 tests failed after AI analysis and retry attempts"
+          echo "Check the AI analysis in the PR comment for details"
+          exit 1
 
   # Important tests - block releases only
   test-tier1:

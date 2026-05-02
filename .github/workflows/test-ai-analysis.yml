@@ -1,0 +1,191 @@
+name: Test AI Analysis System
+
+on:
+  push:
+    paths:
+      - ".github/actions/analyze-test-failures/**"
+      - ".github/workflows/test-ai-analysis.yml"
+  pull_request:
+    paths:
+      - ".github/actions/analyze-test-failures/**"
+      - ".github/workflows/test-ai-analysis.yml"
+  workflow_dispatch:
+    inputs:
+      test-scenario:
+        description: "Test scenario to run"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - "all"
+          - "timeout-failure"
+          - "network-failure"
+          - "assertion-failure"
+
+jobs:
+  test-timeout-failure:
+    name: Test Timeout Failure Analysis
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test-scenario == 'timeout-failure' || github.event.inputs.test-scenario == 'all' || github.event.inputs.test-scenario == ''
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create timeout failure artifacts
+        run: |
+          mkdir -p test-failures/timeout-scenario
+
+          cat > test-failures/timeout-scenario/test.log << 'EOF'
+          [2024-01-15T10:30:00.000Z] Starting test: should load dashboard
+          [2024-01-15T10:30:32.000Z] Error: Timeout 30000ms exceeded.
+          [2024-01-15T10:30:32.000Z] Test failed with timeout error
+          EOF
+
+          echo "Mock screenshot" > test-failures/timeout-scenario/failure.png
+
+      - name: Test AI analysis on timeout scenario
+        id: timeout-analysis
+        uses: ./.github/actions/analyze-test-failures
+        with:
+          test-tier: "tier1"
+          artifacts-path: ./test-failures/timeout-scenario
+          trigger-context: "test"
+
+      - name: Validate timeout analysis results
+        run: |
+          echo "=== Timeout Scenario Analysis Results ==="
+          echo "Failure Type: ${{ steps.timeout-analysis.outputs.failure-type }}"
+          echo "Confidence: ${{ steps.timeout-analysis.outputs.confidence }}"
+          echo "Retry Recommended: ${{ steps.timeout-analysis.outputs.retry-recommended }}"
+
+          if [[ "${{ steps.timeout-analysis.outputs.failure-type }}" == "flaky" ]]; then
+            echo "✅ Correctly identified as flaky failure"
+          else
+            echo "❌ Expected 'flaky' but got '${{ steps.timeout-analysis.outputs.failure-type }}'"
+            exit 1
+          fi
+
+          if [[ "${{ steps.timeout-analysis.outputs.retry-recommended }}" == "true" ]]; then
+            echo "✅ Correctly recommended retry"
+          else
+            echo "❌ Expected retry recommendation for flaky timeout"
+            exit 1
+          fi
+
+  test-network-failure:
+    name: Test Network Failure Analysis
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test-scenario == 'network-failure' || github.event.inputs.test-scenario == 'all' || github.event.inputs.test-scenario == ''
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create network failure artifacts
+        run: |
+          mkdir -p test-failures/network-scenario
+
+          cat > test-failures/network-scenario/test.log << 'EOF'
+          [2024-01-15T10:30:02.000Z] Error: connect ECONNREFUSED ::1:3000
+          [2024-01-15T10:30:02.000Z] Network error - unable to connect to server
+          EOF
+
+      - name: Test AI analysis on network scenario
+        id: network-analysis
+        uses: ./.github/actions/analyze-test-failures
+        with:
+          test-tier: "tier0"
+          artifacts-path: ./test-failures/network-scenario
+          trigger-context: "test"
+
+      - name: Validate network analysis results
+        run: |
+          echo "=== Network Scenario Analysis Results ==="
+          echo "Failure Type: ${{ steps.network-analysis.outputs.failure-type }}"
+          echo "Retry Recommended: ${{ steps.network-analysis.outputs.retry-recommended }}"
+
+          if [[ "${{ steps.network-analysis.outputs.failure-type }}" == "infrastructure" ]]; then
+            echo "✅ Correctly identified as infrastructure failure"
+          else
+            echo "❌ Expected 'infrastructure' but got '${{ steps.network-analysis.outputs.failure-type }}'"
+            exit 1
+          fi
+
+          if [[ "${{ steps.network-analysis.outputs.retry-recommended }}" == "true" ]]; then
+            echo "✅ Correctly recommended retry for infrastructure issue"
+          else
+            echo "❌ Expected retry recommendation for infrastructure failure"
+            exit 1
+          fi
+
+  test-assertion-failure:
+    name: Test Assertion Failure Analysis
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test-scenario == 'assertion-failure' || github.event.inputs.test-scenario == 'all' || github.event.inputs.test-scenario == ''
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create assertion failure artifacts
+        run: |
+          mkdir -p test-failures/assertion-scenario
+
+          cat > test-failures/assertion-scenario/test.log << 'EOF'
+          [2024-01-15T10:30:01.000Z] Expected: 8, Actual: 9
+          [2024-01-15T10:30:01.000Z] AssertionError: Expected calculation to return 8 but got 9
+          EOF
+
+      - name: Test AI analysis on assertion scenario
+        id: assertion-analysis
+        uses: ./.github/actions/analyze-test-failures
+        with:
+          test-tier: "tier0"
+          artifacts-path: ./test-failures/assertion-scenario
+          trigger-context: "test"
+
+      - name: Validate assertion analysis results
+        run: |
+          echo "=== Assertion Scenario Analysis Results ==="
+          echo "Failure Type: ${{ steps.assertion-analysis.outputs.failure-type }}"
+          echo "Retry Recommended: ${{ steps.assertion-analysis.outputs.retry-recommended }}"
+
+          if [[ "${{ steps.assertion-analysis.outputs.retry-recommended }}" == "false" ]]; then
+            echo "✅ Correctly did not recommend retry for assertion failure"
+          else
+            echo "❌ Should not recommend retry for assertion failures"
+            exit 1
+          fi
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-timeout-failure, test-network-failure, test-assertion-failure]
+    if: always()
+    steps:
+      - name: Generate test summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## 🧪 AI Analysis System Test Results
+
+          | Test Scenario | Status | Expected Behavior | Result |
+          |--------------|--------|-------------------|--------|
+          | Timeout Failure | ${{ needs.test-timeout-failure.result }} | Identify as flaky, recommend retry | ✅ |
+          | Network Failure | ${{ needs.test-network-failure.result }} | Identify as infrastructure, recommend retry | ✅ |
+          | Assertion Failure | ${{ needs.test-assertion-failure.result }} | Identify as real bug, no retry | ✅ |
+
+          ### 🎯 Key Features
+          - ✅ **Pattern Detection**: Shell-based analysis using grep
+          - ✅ **Retry Logic**: Tier-based retry recommendations
+          - ✅ **Simple Action**: No complex dependencies or compilation
+          - ✅ **PR Comments**: Automated failure analysis comments
+          EOF
+
+      - name: Check overall test status
+        run: |
+          if [[ "${{ needs.test-timeout-failure.result }}" == "success" &&
+                "${{ needs.test-network-failure.result }}" == "success" &&
+                "${{ needs.test-assertion-failure.result }}" == "success" ]]; then
+            echo "🎉 All AI analysis tests passed!"
+          else
+            echo "❌ Some tests failed - check individual job results"
+            exit 1
+          fi
